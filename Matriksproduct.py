@@ -15,7 +15,8 @@ st.set_page_config(
 st.title("📊 Bundling Rate Calculator")
 st.caption("Generic Pricing Engine – Excel Driven")
 
-FILE_PATH = "data/Template_Bundling_Rate_Streamlit_FULL.xlsx"
+FILE_PATH = "Template_Bundling_Rate_Streamlit_FULL.xlsx"
+
 
 # =====================
 # LOAD DATA
