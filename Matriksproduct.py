@@ -1,138 +1,106 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
-from io import BytesIO
+from loader import load_excel
+from engine import lookup_rate
+from validator import check_dependency
+from formatter import pct
 
-st.set_page_config(page_title="Bulk Profitability Checker - Askrindo", layout="wide")
-st.title("📊 Bulk Profitability Checker – Askrindo")
+# =====================
+# CONFIG
+# =====================
+st.set_page_config(
+    page_title="Bundling Rate Calculator",
+    layout="wide"
+)
 
-# =========================
-# INPUT EXCEL
-# =========================
-uploaded = st.file_uploader("📁 Upload Excel Bulk Input Template", type=["xlsx"])
+st.title("📊 Bundling Rate Calculator")
+st.caption("Generic Pricing Engine – Excel Driven")
 
-# =========================
-# INPUT ASSUMPTIONS
-# =========================
-st.sidebar.header("Asumsi Profitability")
-komisi_bppdan = st.sidebar.number_input("% Komisi BPPDAN", 0.0, 1.0, 0.10)
-loss_ratio = st.sidebar.number_input("% Loss Ratio (AL9)", 0.0, 1.0, 0.45)
-premi_xol = st.sidebar.number_input("% Premi XOL (AQ9)", 0.0, 1.0, 0.12)
-expense_ratio = st.sidebar.number_input("% Expense (AR9)", 0.0, 1.0, 0.20)
+FILE_PATH = "data/Template_Bundling_Rate_Streamlit_FULL.xlsx"
 
-process_btn = st.button("🚀 Proses Profitability")
+# =====================
+# LOAD DATA
+# =====================
+sheets = load_excel(FILE_PATH)
+df_master = sheets["COVERAGE_MASTER"]
 
+df_master.columns = df_master.columns.str.lower()
 
-# =========================
-# ENGINE PROCESS
-# =========================
-def process_profitability(df):
+df_master = df_master[df_master["active"] == 1]
 
-    # Rename for easy reference (optional)
-    df.columns = [c.strip() for c in df.columns]
+# =====================
+# COVERAGE SELECTION
+# =====================
+st.subheader("Pilih Coverage")
 
-    # Currency conversion
-    df["TSI_IDR"] = df["TSI Full Value original currency"] * df["Kurs"]
-    df["Limit_IDR"] = df["Limit of Liability original currency"] * df["Kurs"]
-    df["TopRisk_IDR"] = df["Top Risk original currency"] * df["Kurs"]
+coverage_map = {
+    f"{r.coverage_code} - {r.coverage_name}": r.coverage_code
+    for _, r in df_master.iterrows()
+}
 
-    # Exposure Basis = basis pembagian share
-    df["ExposureBasis"] = df[["Limit_IDR", "TopRisk_IDR"]].max(axis=1)
+selected_names = st.multiselect(
+    "Coverage Aktif",
+    options=list(coverage_map.keys())
+)
 
-    # Askrindo retained
-    df["S_Askrindo"] = df["% Askrindo Share"] * df["ExposureBasis"]
+selected_codes = [coverage_map[n] for n in selected_names]
 
-    # BPPDAN capped
-    df["BPPDAN_amt"] = np.minimum(
-        0.025 * df["S_Askrindo"],
-        500_000_000 * df["% Askrindo Share"]
-    )
-    df["%BPPDAN"] = df["BPPDAN_amt"] / df["ExposureBasis"]
+# =====================
+# VALIDATION
+# =====================
+errors = check_dependency(selected_codes, df_master)
+if errors:
+    for e in errors:
+        st.error(e)
+    st.stop()
 
-    # Facultative
-    df["Fac_amt"] = df["% Fakultatif Share"] * df["ExposureBasis"]
+# =====================
+# INPUT RISIKO (DYNAMIC)
+# =====================
+st.subheader("Input Risiko")
 
-    # OR = residual
-    df["OR_amt"] = df["S_Askrindo"] - df["BPPDAN_amt"] - df["Fac_amt"]
-    df["%OR"] = df["OR_amt"] / df["ExposureBasis"]
+rates = []
+breakdown = []
 
-    # Premium 100% Share
-    df["Prem100"] = (
-        df["Rate"] *
-        df["% LOL Premi"] *
-        df["TSI_IDR"]
-    )
+for code in selected_codes:
+    row = df_master[df_master.coverage_code == code].iloc[0]
 
-    # Premium split
-    df["Prem_Askrindo"] = df["Prem100"] * df["% Askrindo Share"]
-    df["Prem_BPPDAN"] = df["Prem100"] * df["%BPPDAN"]
-    df["Prem_OR"] = df["Prem100"] * df["%OR"]
-    df["Prem_Fac"] = df["Prem100"] * df["% Fakultatif Share"]
+    if row.rate_source == "flat":
+        rate = row.weight * 0
+        rates.append(rate)
+        breakdown.append((code, rate))
+        continue
 
-    # Acquisition (Askrindo)
-    df["Acq_amt"] = df["% Akuisisi"] * df["Prem_Askrindo"]
+    df_rate = sheets[row.rate_sheet]
+    df_rate.columns = df_rate.columns.str.lower()
 
-    # Komisi BPPDAN
-    df["Komisi_BPPDAN"] = komisi_bppdan * df["Prem_BPPDAN"]
+    risk_cols = [c for c in df_rate.columns if c != "rate"]
 
-    # Komisi Facultative
-    df["Komisi_Fac"] = df["% Komisi Fakultatif"] * df["Prem_Fac"]
+    risk_input = {}
 
-    # Expected Loss
-    df["EL_100"] = loss_ratio * df["Prem100"]
-    df["EL_Askrindo"] = df["EL_100"] * df["% Askrindo Share"]
-    df["EL_BPPDAN"] = df["EL_100"] * df["%BPPDAN"]
-    df["EL_OR"] = df["EL_100"] * df["%OR"]
-    df["EL_Fac"] = df["EL_100"] * df["% Fakultatif Share"]
+    with st.expander(f"⚙️ {code}"):
+        for c in risk_cols:
+            risk_input[c] = st.selectbox(
+                f"{c.replace('_',' ').title()}",
+                df_rate[c].dropna().unique()
+            )
 
-    # XL & Expense
-    df["XL_cost"] = premi_xol * df["Prem_OR"]
-    df["Expense"] = expense_ratio * df["Prem_Askrindo"]
+    rate = lookup_rate(df_rate, risk_input) * row.weight
 
-    # Final UW Result
-    df["Result"] = (
-        df["Prem_Askrindo"]
-        - df["Prem_BPPDAN"]
-        - df["Prem_Fac"]
-        - df["Acq_amt"]
-        + df["Komisi_BPPDAN"]
-        + df["Komisi_Fac"]
-        - df["EL_Askrindo"]
-        + df["EL_BPPDAN"]
-        + df["EL_Fac"]
-        - df["XL_cost"]
-        - df["Expense"]
-    )
+    rates.append(rate)
+    breakdown.append((code, rate))
 
-    return df
+# =====================
+# OUTPUT
+# =====================
+if rates:
+    total_rate = sum(rates)
 
+    st.subheader("Breakdown Rate")
 
-# =========================
-# DISPLAY RESULT
-# =========================
-if process_btn and uploaded:
-    raw_df = pd.read_excel(uploaded)
-    result_df = process_profitability(raw_df.copy())
+    for c, r in breakdown:
+        st.write(f"- **{c}** : {pct(r)}")
 
-    st.success("Selesai diproses! 🎉")
-    st.subheader("📊 Hasil Profitability")
-    st.dataframe(result_df)
-
-    # Summary
-    st.subheader("📈 Summary Portfolio")
-    st.write(f"Total Premi Askrindo: {result_df['Prem_Askrindo'].sum():,.0f}")
-    st.write(f"Total Result: {result_df['Result'].sum():,.0f}")
-
-    # Download Excel
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        result_df.to_excel(writer, index=False, sheet_name="Profitability")
-    st.download_button(
-        label="📥 Download Excel Hasil",
-        data=output.getvalue(),
-        file_name="Profitability_Output.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-elif process_btn and not uploaded:
-    st.error("❗ Harap upload file input terlebih dahulu.")
+    st.subheader("Total Bundling Rate")
+    st.metric("TOTAL RATE", pct(total_rate))
+else:
+    st.info("Pilih minimal satu coverage.")
