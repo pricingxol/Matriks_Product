@@ -23,7 +23,7 @@ def load_rate_matrix(path):
 df_rate = load_rate_matrix("rate_matrix_produk.xlsx")
 
 # =====================================================
-# CORE ENGINE
+# CORE ENGINE (GENERIC)
 # =====================================================
 def get_rate(df, coverage, subcover=None, selected_factors=None):
 
@@ -40,7 +40,7 @@ def get_rate(df, coverage, subcover=None, selected_factors=None):
             continue
 
         q &= (
-            (df[col] == val) |
+            (df[col].astype(str) == str(val)) |
             (df[col].isna()) |
             (df[col] == "ALL")
         )
@@ -48,7 +48,7 @@ def get_rate(df, coverage, subcover=None, selected_factors=None):
     result = df[q].copy()
 
     if result.empty:
-        raise ValueError("Rate tidak ditemukan")
+        raise ValueError("Rate tidak ditemukan untuk kombinasi input tersebut")
 
     factor_cols = [
         c for c in df.columns
@@ -62,102 +62,104 @@ def get_rate(df, coverage, subcover=None, selected_factors=None):
 
 
 # =====================================================
-# SESSION STATE INIT
+# SESSION STATE
 # =====================================================
 if "products" not in st.session_state:
     st.session_state.products = []
 
 # =====================================================
-# ADD PRODUCT FORM
+# INPUT PRODUK (HORIZONTAL)
 # =====================================================
 st.subheader("➕ Tambah Produk")
 
-col1, col2 = st.columns(2)
+coverage = st.selectbox(
+    "Coverage",
+    sorted(df_rate["Coverage"].dropna().unique())
+)
 
-with col1:
-    coverage = st.selectbox(
-        "Coverage",
-        sorted(df_rate["Coverage"].dropna().unique()),
-        key="new_coverage"
+subcover_options = (
+    df_rate[df_rate["Coverage"] == coverage]["Subcover"]
+    .dropna()
+    .unique()
+)
+
+cols = st.columns(max(1, len(st.session_state.products) + 1))
+
+with cols[0]:
+    new_subcover = st.selectbox(
+        "Subcover",
+        sorted(subcover_options),
+        key="new_subcover"
     )
 
-with col2:
-    subcover_list = (
-        df_rate[df_rate["Coverage"] == coverage]["Subcover"]
-        .dropna()
-        .unique()
-    )
-
-    subcover = None
-    if len(subcover_list) > 0:
-        subcover = st.selectbox(
+for i, p in enumerate(st.session_state.products):
+    with cols[i + 1]:
+        st.selectbox(
             "Subcover",
-            sorted(subcover_list),
-            key="new_subcover"
+            [p["Subcover"]],
+            disabled=True,
+            key=f"locked_subcover_{i}"
         )
 
-df_filtered = df_rate[df_rate["Coverage"] == coverage].copy()
-if subcover:
-    df_filtered = df_filtered[df_filtered["Subcover"] == subcover]
+# =====================================================
+# FAKTOR RISIKO (UNTUK PRODUK BARU)
+# =====================================================
+df_filtered = df_rate[
+    (df_rate["Coverage"] == coverage) &
+    (df_rate["Subcover"] == new_subcover)
+]
 
-st.markdown("**Faktor Risiko**")
+st.subheader("Faktor Risiko")
 
 selected_factors = {}
 
-factor_columns = [
-    c for c in df_filtered.columns
-    if c not in ["Coverage", "Subcover", "Rate"]
-]
+for col in df_filtered.columns:
+    if col in ["Coverage", "Subcover", "Rate"]:
+        continue
 
-for col in factor_columns:
     values = (
         df_filtered[col]
         .dropna()
         .loc[~df_filtered[col].isin(["ALL"])]
+        .astype(str)
         .unique()
     )
 
     if len(values) == 0:
         continue
 
-    selected = st.selectbox(
-        col,
-        sorted(values),
-        key=f"new_{col}"
-    )
-
-    selected_factors[col] = selected
+    selected_factors[col] = st.selectbox(col, sorted(values))
 
 # =====================================================
-# ADD BUTTON
+# ADD PRODUCT
 # =====================================================
-if st.button("➕ Tambahkan ke Bundling"):
+if st.button("➕ Tambah Produk"):
     try:
         rate = get_rate(
             df=df_rate,
             coverage=coverage,
-            subcover=subcover,
+            subcover=new_subcover,
             selected_factors=selected_factors
         )
 
         st.session_state.products.append({
             "Coverage": coverage,
-            "Subcover": subcover,
+            "Subcover": new_subcover,
             "Factors": selected_factors,
             "Rate": rate
         })
 
         st.success("Produk berhasil ditambahkan")
+        st.experimental_rerun()
 
     except Exception as e:
         st.error(str(e))
 
-
 # =====================================================
-# BUNDLING TABLE
+# BUNDLING RESULT
 # =====================================================
 st.divider()
-st.subheader("📦 Daftar Produk Bundling")
+st.subheader("📦 Bundling Product")
 
 if len(st.session_state.products) == 0:
     st.info("Belum ada produk yang dibundling")
@@ -180,9 +182,20 @@ else:
         total_rate += p["Rate"]
 
     df_bundle = pd.DataFrame(rows)
-    st.dataframe(df_bundle, use_container_width=True)
+    st.dataframe(df_bundle, use_container_width=True, hide_index=True)
 
     st.success(f"✅ **Total Bundling Rate: {total_rate:.4%}**")
+
+    # =================================================
+    # CATATAN / DISCLAIMER (REQUEST KAMU)
+    # =================================================
+    st.warning(
+        """
+        **Catatan:**
+        1. Maksimum akuisisi adalah **20%**, kecuali terdapat ketentuan lain dari **Regulator**.
+        2. Untuk pemberian **rate di bawah rate acuan**, dapat dilakukan **perhitungan profitability checking**.
+        """
+    )
 
 # =====================================================
 # RESET
@@ -191,9 +204,8 @@ if st.button("🔄 Reset Bundling"):
     st.session_state.products = []
     st.experimental_rerun()
 
-
 # =====================================================
-# VIEW MATRIX
+# VIEW RATE MATRIX
 # =====================================================
 st.divider()
 st.subheader("📋 Rate Matrix (Read Only)")
