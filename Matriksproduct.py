@@ -199,9 +199,14 @@ if st.session_state.results:
     df_out = pd.DataFrame(results)
     df_out.insert(0, "No", range(1, len(df_out) + 1))
 
+    # Format Rate ke persen
+    df_out["Rate (%)"] = df_out["Rate (%)"].map(lambda x: f"{x:.4f}%")
+
     st.dataframe(df_out, use_container_width=True, hide_index=True)
 
-    st.success(f"✅ **Total Bundling Rate: {total_rate:.4%}**")
+    st.success(
+        f"✅ **Total Bundling Rate: {total_rate * 100:.4f}%**"
+    )
 
     st.warning(
         """
@@ -210,3 +215,4 @@ if st.session_state.results:
         2. Untuk pemberian **rate di bawah rate acuan**, dapat dilakukan **perhitungan profitability checking**.
         """
     )
+
