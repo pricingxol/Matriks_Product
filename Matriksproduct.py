@@ -10,6 +10,7 @@ st.set_page_config(
 )
 
 st.title("📊 Bundling Rate Calculator")
+st.caption("by Divisi Aktuaria Askrindo")
 
 # =====================================================
 # LOAD DATA
@@ -32,8 +33,7 @@ def get_rate(df, coverage, subcover, selected_factors):
     for col, val in selected_factors.items():
         q &= (
             (df[col].astype(str) == str(val)) |
-            (df[col].isna()) |
-            (df[col] == "ALL")
+            (df[col].isna())
         )
 
     result = df[q].copy()
@@ -41,7 +41,11 @@ def get_rate(df, coverage, subcover, selected_factors):
     if result.empty:
         raise ValueError(f"Rate tidak ditemukan: {coverage} - {subcover}")
 
-    factor_cols = [c for c in df.columns if c not in ["Coverage", "Subcover", "Rate"]]
+    factor_cols = [
+        c for c in df.columns
+        if c not in ["Coverage", "Subcover", "Rate"]
+    ]
+
     result["priority"] = result[factor_cols].isna().sum(axis=1)
 
     return float(result.sort_values("priority").iloc[0]["Rate"])
@@ -58,7 +62,7 @@ if "results" not in st.session_state:
 
 
 # =====================================================
-# INPUT PRODUK – 1 ROW PER PRODUK
+# INPUT PRODUK (1 ROW PER PRODUK)
 # =====================================================
 st.subheader("Input Produk")
 
@@ -90,7 +94,7 @@ for i, p in enumerate(st.session_state.products):
             key=f"subcover_{i}"
         )
 
-    # -------- Factor columns --------
+    # -------- Context-aware factors --------
     df_filt = df_rate[
         (df_rate["Coverage"] == p["Coverage"]) &
         (df_rate["Subcover"] == p["Subcover"])
@@ -103,22 +107,34 @@ for i, p in enumerate(st.session_state.products):
     ]
 
     factors = {}
+    df_context = df_filt.copy()
 
     for idx, col in enumerate(factor_cols[:3]):
         with cols[2 + idx]:
+
             values = (
-                df_filt[col]
+                df_context[col]
                 .dropna()
-                .loc[~df_filt[col].isin(["ALL"])]
                 .astype(str)
                 .unique()
             )
 
-            factors[col] = st.selectbox(
+            if len(values) == 0:
+                continue
+
+            selected = st.selectbox(
                 col if i == 0 else "",
                 sorted(values),
                 key=f"{col}_{i}"
             )
+
+            factors[col] = selected
+
+            # 🔥 context filtering
+            df_context = df_context[
+                (df_context[col].astype(str) == str(selected)) |
+                (df_context[col].isna())
+            ]
 
     p["Factors"] = factors
     p["ExpectedFactors"] = factor_cols
@@ -130,6 +146,7 @@ for i, p in enumerate(st.session_state.products):
                 st.session_state.products.pop(i)
                 st.session_state.results = None
                 st.rerun()
+
 
 # =====================================================
 # ADD PRODUCT
@@ -179,7 +196,7 @@ if st.button("Hitung Rate"):
                 "Coverage": p["Coverage"],
                 "Subcover": p["Subcover"],
                 **p["Factors"],
-                "Rate": rate
+                "Rate (%)": rate * 100
             })
 
             total_rate += rate
@@ -199,7 +216,6 @@ if st.session_state.results:
     df_out = pd.DataFrame(results)
     df_out.insert(0, "No", range(1, len(df_out) + 1))
 
-    # Format Rate ke persen
     df_out["Rate (%)"] = df_out["Rate (%)"].map(lambda x: f"{x:.4f}%")
 
     st.dataframe(df_out, use_container_width=True, hide_index=True)
@@ -215,4 +231,3 @@ if st.session_state.results:
         2. Untuk pemberian **rate di bawah rate acuan**, dapat dilakukan **perhitungan profitability checking**.
         """
     )
-
