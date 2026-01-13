@@ -23,7 +23,7 @@ def load_rate_matrix(path):
 df_rate = load_rate_matrix("rate_matrix_produk.xlsx")
 
 # =====================================================
-# CORE ENGINE (GENERIC)
+# CORE ENGINE
 # =====================================================
 def get_rate(df, coverage, subcover=None, selected_factors=None):
 
@@ -48,7 +48,7 @@ def get_rate(df, coverage, subcover=None, selected_factors=None):
     result = df[q].copy()
 
     if result.empty:
-        raise ValueError("Rate tidak ditemukan untuk kombinasi input tersebut")
+        raise ValueError("Rate tidak ditemukan")
 
     factor_cols = [
         c for c in df.columns
@@ -68,7 +68,7 @@ if "products" not in st.session_state:
     st.session_state.products = []
 
 # =====================================================
-# INPUT PRODUK (HORIZONTAL)
+# INPUT PRODUK (UI KAMU – VERTIKAL)
 # =====================================================
 st.subheader("➕ Tambah Produk")
 
@@ -83,33 +83,20 @@ subcover_options = (
     .unique()
 )
 
-cols = st.columns(max(1, len(st.session_state.products) + 1))
-
-with cols[0]:
-    new_subcover = st.selectbox(
-        "Subcover",
-        sorted(subcover_options),
-        key="new_subcover"
-    )
-
-for i, p in enumerate(st.session_state.products):
-    with cols[i + 1]:
-        st.selectbox(
-            "Subcover",
-            [p["Subcover"]],
-            disabled=True,
-            key=f"locked_subcover_{i}"
-        )
+subcover = st.selectbox(
+    "Subcover",
+    sorted(subcover_options)
+)
 
 # =====================================================
-# FAKTOR RISIKO (UNTUK PRODUK BARU)
+# FAKTOR RISIKO
 # =====================================================
+st.subheader("Faktor Risiko")
+
 df_filtered = df_rate[
     (df_rate["Coverage"] == coverage) &
-    (df_rate["Subcover"] == new_subcover)
+    (df_rate["Subcover"] == subcover)
 ]
-
-st.subheader("Faktor Risiko")
 
 selected_factors = {}
 
@@ -138,19 +125,19 @@ if st.button("➕ Tambah Produk"):
         rate = get_rate(
             df=df_rate,
             coverage=coverage,
-            subcover=new_subcover,
+            subcover=subcover,
             selected_factors=selected_factors
         )
 
         st.session_state.products.append({
             "Coverage": coverage,
-            "Subcover": new_subcover,
+            "Subcover": subcover,
             "Factors": selected_factors,
             "Rate": rate
         })
 
         st.success("Produk berhasil ditambahkan")
-        st.experimental_rerun()
+        st.rerun()
 
     except Exception as e:
         st.error(str(e))
@@ -187,12 +174,12 @@ else:
     st.success(f"✅ **Total Bundling Rate: {total_rate:.4%}**")
 
     # =================================================
-    # CATATAN / DISCLAIMER (REQUEST KAMU)
+    # CATATAN (REQUEST KAMU)
     # =================================================
     st.warning(
         """
         **Catatan:**
-        1. Maksimum akuisisi adalah **20%**, kecuali terdapat ketentuan lain dari **Regulator**.
+        1. Maksimum akuisisi adalah **20%**, kecuali terdapat ketentuan dari **Regulator**.
         2. Untuk pemberian **rate di bawah rate acuan**, dapat dilakukan **perhitungan profitability checking**.
         """
     )
@@ -202,7 +189,7 @@ else:
 # =====================================================
 if st.button("🔄 Reset Bundling"):
     st.session_state.products = []
-    st.experimental_rerun()
+    st.rerun()
 
 # =====================================================
 # VIEW RATE MATRIX
