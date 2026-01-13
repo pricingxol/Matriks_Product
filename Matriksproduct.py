@@ -30,9 +30,6 @@ def get_rate(df, coverage, subcover, selected_factors):
     q = (df["Coverage"] == coverage) & (df["Subcover"] == subcover)
 
     for col, val in selected_factors.items():
-        if col not in df.columns:
-            continue
-
         q &= (
             (df[col].astype(str) == str(val)) |
             (df[col].isna()) |
@@ -44,15 +41,10 @@ def get_rate(df, coverage, subcover, selected_factors):
     if result.empty:
         raise ValueError(f"Rate tidak ditemukan: {coverage} - {subcover}")
 
-    factor_cols = [
-        c for c in df.columns
-        if c not in ["Coverage", "Subcover", "Rate"]
-    ]
-
+    factor_cols = [c for c in df.columns if c not in ["Coverage", "Subcover", "Rate"]]
     result["priority"] = result[factor_cols].isna().sum(axis=1)
-    result = result.sort_values("priority")
 
-    return float(result.iloc[0]["Rate"])
+    return float(result.sort_values("priority").iloc[0]["Rate"])
 
 
 # =====================================================
@@ -66,7 +58,7 @@ if "results" not in st.session_state:
 
 
 # =====================================================
-# INPUT PRODUK (BARIS)
+# INPUT PRODUK – 1 ROW PER PRODUK
 # =====================================================
 st.subheader("Input Produk")
 
@@ -74,75 +66,73 @@ coverage_list = sorted(df_rate["Coverage"].dropna().unique())
 
 for i, p in enumerate(st.session_state.products):
 
-    st.markdown(f"### Produk {i + 1}")
+    cols = st.columns([2, 3, 2, 2, 2, 0.5])
 
-    col1, col2, col3 = st.columns([3, 3, 1])
-
-    with col1:
+    # -------- Coverage --------
+    with cols[0]:
         p["Coverage"] = st.selectbox(
-            "Coverage",
+            "Coverage" if i == 0 else "",
             coverage_list,
             key=f"coverage_{i}"
         )
 
+    # -------- Subcover --------
     subcover_options = (
         df_rate[df_rate["Coverage"] == p["Coverage"]]["Subcover"]
         .dropna()
         .unique()
     )
 
-    with col2:
+    with cols[1]:
         p["Subcover"] = st.selectbox(
-            "Subcover",
+            "Subcover" if i == 0 else "",
             sorted(subcover_options),
             key=f"subcover_{i}"
         )
 
-    with col3:
-        if len(st.session_state.products) > 1:
-            if st.button("❌", key=f"delete_{i}"):
-                st.session_state.products.pop(i)
-                st.session_state.results = None
-                st.rerun()
-
-    # =========================
-    # Faktor Risiko
-    # =========================
+    # -------- Factor columns --------
     df_filt = df_rate[
         (df_rate["Coverage"] == p["Coverage"]) &
         (df_rate["Subcover"] == p["Subcover"])
     ]
 
+    factor_cols = [
+        c for c in df_filt.columns
+        if c not in ["Coverage", "Subcover", "Rate"]
+        and df_filt[c].dropna().nunique() > 0
+    ]
+
     factors = {}
 
-    for col in df_filt.columns:
-        if col in ["Coverage", "Subcover", "Rate"]:
-            continue
+    for idx, col in enumerate(factor_cols[:3]):
+        with cols[2 + idx]:
+            values = (
+                df_filt[col]
+                .dropna()
+                .loc[~df_filt[col].isin(["ALL"])]
+                .astype(str)
+                .unique()
+            )
 
-        values = (
-            df_filt[col]
-            .dropna()
-            .loc[~df_filt[col].isin(["ALL"])]
-            .astype(str)
-            .unique()
-        )
-
-        if len(values) == 0:
-            continue
-
-        factors[col] = st.selectbox(
-            col,
-            sorted(values),
-            key=f"{col}_{i}"
-        )
+            factors[col] = st.selectbox(
+                col if i == 0 else "",
+                sorted(values),
+                key=f"{col}_{i}"
+            )
 
     p["Factors"] = factors
+    p["ExpectedFactors"] = factor_cols
 
-    st.divider()
-
+    # -------- Delete button --------
+    with cols[5]:
+        if len(st.session_state.products) > 1:
+            if st.button("❌", key=f"del_{i}"):
+                st.session_state.products.pop(i)
+                st.session_state.results = None
+                st.rerun()
 
 # =====================================================
-# TAMBAH PRODUK
+# ADD PRODUCT
 # =====================================================
 if st.button("➕ Tambah Produk"):
     st.session_state.products.append({})
@@ -151,16 +141,16 @@ if st.button("➕ Tambah Produk"):
 
 
 # =====================================================
-# VALIDATION FUNCTION
+# VALIDATION
 # =====================================================
-def validate_inputs(products):
+def validate_products(products):
     for idx, p in enumerate(products, start=1):
-        if not p.get("Coverage"):
-            return False, f"Produk {idx}: Coverage belum dipilih"
-        if not p.get("Subcover"):
-            return False, f"Produk {idx}: Subcover belum dipilih"
-        if not p.get("Factors"):
+        expected = p.get("ExpectedFactors", [])
+        filled = p.get("Factors", {})
+
+        if expected and len(filled) < len(expected):
             return False, f"Produk {idx}: Faktor risiko belum lengkap"
+
     return True, None
 
 
@@ -169,7 +159,7 @@ def validate_inputs(products):
 # =====================================================
 if st.button("Hitung Rate"):
 
-    valid, msg = validate_inputs(st.session_state.products)
+    valid, msg = validate_products(st.session_state.products)
 
     if not valid:
         st.error(f"❌ {msg}")
@@ -177,32 +167,28 @@ if st.button("Hitung Rate"):
         results = []
         total_rate = 0
 
-        try:
-            for p in st.session_state.products:
-                rate = get_rate(
-                    df_rate,
-                    p["Coverage"],
-                    p["Subcover"],
-                    p["Factors"]
-                )
+        for p in st.session_state.products:
+            rate = get_rate(
+                df_rate,
+                p["Coverage"],
+                p["Subcover"],
+                p["Factors"]
+            )
 
-                results.append({
-                    "Coverage": p["Coverage"],
-                    "Subcover": p["Subcover"],
-                    **p["Factors"],
-                    "Rate": rate
-                })
+            results.append({
+                "Coverage": p["Coverage"],
+                "Subcover": p["Subcover"],
+                **p["Factors"],
+                "Rate": rate
+            })
 
-                total_rate += rate
+            total_rate += rate
 
-            st.session_state.results = (results, total_rate)
-
-        except Exception as e:
-            st.error(str(e))
+        st.session_state.results = (results, total_rate)
 
 
 # =====================================================
-# OUTPUT (ONLY AFTER HITUNG RATE)
+# OUTPUT
 # =====================================================
 if st.session_state.results:
 
