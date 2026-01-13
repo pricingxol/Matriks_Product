@@ -25,46 +25,29 @@ df_rate = load_rate_matrix("rate_matrix_produk.xlsx")
 # =====================================================
 # CORE FUNCTION
 # =====================================================
-def get_rate(
-    df,
-    coverage,
-    subcover=None,
-    factor_1=None,
-    factor_2=None,
-    factor_3=None
-):
+def get_rate(df, coverage, subcover=None, f1=None, f2=None, f3=None):
+
     q = df["Coverage"] == coverage
 
     if subcover:
         q &= df["Subcover"] == subcover
 
-    if factor_1 is not None:
-        q &= (
-            (df["Factor_1"] == factor_1) |
-            (df["Factor_1"].isna()) |
-            (df["Factor_1"] == "ALL")
-        )
-
-    if factor_2 is not None:
-        q &= (
-            (df["Factor_2"] == factor_2) |
-            (df["Factor_2"].isna()) |
-            (df["Factor_2"] == "ALL")
-        )
-
-    if factor_3 is not None:
-        q &= (
-            (df["Factor_3"] == factor_3) |
-            (df["Factor_3"].isna()) |
-            (df["Factor_3"] == "ALL")
-        )
+    for col, val in zip(
+        ["Factor_1", "Factor_2", "Factor_3"],
+        [f1, f2, f3]
+    ):
+        if val is not None:
+            q &= (
+                (df[col] == val) |
+                (df[col].isna()) |
+                (df[col] == "ALL")
+            )
 
     result = df[q].copy()
 
     if result.empty:
-        raise ValueError("Rate tidak ditemukan")
+        raise ValueError("Rate tidak ditemukan untuk kombinasi tersebut")
 
-    # Prioritas paling spesifik
     result["priority"] = (
         result[["Factor_1", "Factor_2", "Factor_3"]]
         .isna()
@@ -77,44 +60,85 @@ def get_rate(
 
 
 # =====================================================
-# SIDEBAR INPUT
+# MAIN INPUT UI
 # =====================================================
-st.sidebar.header("Input Risiko")
+st.subheader("Input Risiko")
 
-coverage = st.sidebar.selectbox(
-    "Coverage",
-    sorted(df_rate["Coverage"].dropna().unique())
-)
+col1, col2 = st.columns(2)
 
-subcover_list = (
-    df_rate[df_rate["Coverage"] == coverage]["Subcover"]
-    .dropna()
-    .unique()
-)
-
-subcover = None
-if len(subcover_list) > 0:
-    subcover = st.sidebar.selectbox(
-        "Subcover",
-        sorted(subcover_list)
+with col1:
+    coverage = st.selectbox(
+        "Coverage",
+        sorted(df_rate["Coverage"].dropna().unique())
     )
 
-factor_1 = st.sidebar.text_input("Factor 1 (mis: Kode Okupasi)")
-factor_2 = st.sidebar.text_input("Factor 2 (mis: Kelas Konstruksi)")
-factor_3 = st.sidebar.text_input("Factor 3 (mis: Zona Risiko)")
+with col2:
+    subcover_list = (
+        df_rate[df_rate["Coverage"] == coverage]["Subcover"]
+        .dropna()
+        .unique()
+    )
+
+    subcover = None
+    if len(subcover_list) > 0:
+        subcover = st.selectbox(
+            "Subcover",
+            sorted(subcover_list)
+        )
+
+# Filter dataframe sesuai coverage & subcover
+df_filtered = df_rate.copy()
+df_filtered = df_filtered[df_filtered["Coverage"] == coverage]
+
+if subcover:
+    df_filtered = df_filtered[df_filtered["Subcover"] == subcover]
+
+# =====================================================
+# DYNAMIC FACTOR DROPDOWNS
+# =====================================================
+f1 = f2 = f3 = None
+
+factor_cols = ["Factor_1", "Factor_2", "Factor_3"]
+labels = [
+    "Factor 1 (mis: Kode Okupasi)",
+    "Factor 2 (mis: Kelas Konstruksi)",
+    "Factor 3 (mis: Zona Risiko)"
+]
+
+for col, label in zip(factor_cols, labels):
+
+    values = (
+        df_filtered[col]
+        .dropna()
+        .loc[~df_filtered[col].isin(["ALL"])]
+        .unique()
+    )
+
+    if len(values) > 0:
+        selected = st.selectbox(
+            label,
+            sorted(values)
+        )
+
+        if col == "Factor_1":
+            f1 = selected
+        elif col == "Factor_2":
+            f2 = selected
+        elif col == "Factor_3":
+            f3 = selected
 
 # =====================================================
 # CALCULATION
 # =====================================================
-if st.sidebar.button("Hitung Rate"):
+if st.button("Hitung Rate"):
     try:
         rate = get_rate(
             df_rate,
             coverage=coverage,
             subcover=subcover,
-            factor_1=factor_1 or None,
-            factor_2=factor_2 or None,
-            factor_3=factor_3 or None
+            f1=f1,
+            f2=f2,
+            f3=f3
         )
 
         st.success(f"✅ Rate ditemukan: **{rate:.4%}**")
@@ -122,8 +146,15 @@ if st.sidebar.button("Hitung Rate"):
     except Exception as e:
         st.error(str(e))
 
+
 # =====================================================
-# DEBUG (OPTIONAL)
+# VIEW MATRIX (BOTTOM)
 # =====================================================
-with st.expander("🔍 Lihat Rate Matrix"):
-    st.dataframe(df_rate, use_container_width=True)
+st.divider()
+st.subheader("📋 Rate Matrix (Read Only)")
+
+st.dataframe(
+    df_rate,
+    use_container_width=True,
+    hide_index=True
+)
