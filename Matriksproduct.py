@@ -23,44 +23,49 @@ def load_rate_matrix(path):
 df_rate = load_rate_matrix("rate_matrix_produk.xlsx")
 
 # =====================================================
-# CORE FUNCTION
+# CORE ENGINE (GENERIC & FUTURE-PROOF)
 # =====================================================
-def get_rate(df, coverage, subcover=None, f1=None, f2=None, f3=None):
+def get_rate(df, coverage, subcover=None, selected_factors=None):
 
+    if selected_factors is None:
+        selected_factors = {}
+
+    # Base filter
     q = df["Coverage"] == coverage
 
     if subcover:
         q &= df["Subcover"] == subcover
 
-    for col, val in zip(
-        ["Factor_1", "Factor_2", "Factor_3"],
-        [f1, f2, f3]
-    ):
-        if val is not None:
-            q &= (
-                (df[col] == val) |
-                (df[col].isna()) |
-                (df[col] == "ALL")
-            )
+    # Dynamic factor filtering
+    for col, val in selected_factors.items():
+        if col not in df.columns:
+            continue
+
+        q &= (
+            (df[col] == val) |
+            (df[col].isna()) |
+            (df[col] == "ALL")
+        )
 
     result = df[q].copy()
 
     if result.empty:
-        raise ValueError("Rate tidak ditemukan untuk kombinasi tersebut")
+        raise ValueError("Rate tidak ditemukan untuk kombinasi input tersebut")
 
-    result["priority"] = (
-        result[["Factor_1", "Factor_2", "Factor_3"]]
-        .isna()
-        .sum(axis=1)
-    )
+    # Priority: paling spesifik (paling sedikit NaN)
+    factor_cols = [
+        c for c in df.columns
+        if c not in ["Coverage", "Subcover", "Rate"]
+    ]
 
+    result["priority"] = result[factor_cols].isna().sum(axis=1)
     result = result.sort_values("priority")
 
     return float(result.iloc[0]["Rate"])
 
 
 # =====================================================
-# MAIN INPUT UI
+# INPUT UI
 # =====================================================
 st.subheader("Input Risiko")
 
@@ -81,34 +86,27 @@ with col2:
 
     subcover = None
     if len(subcover_list) > 0:
-        subcover = st.selectbox(
-            "Subcover",
-            sorted(subcover_list)
-        )
+        subcover = st.selectbox("Subcover", sorted(subcover_list))
 
-# Filter dataframe sesuai coverage & subcover
-df_filtered = df_rate.copy()
-df_filtered = df_filtered[df_filtered["Coverage"] == coverage]
+# Filter dataframe sesuai Coverage & Subcover
+df_filtered = df_rate[df_rate["Coverage"] == coverage].copy()
 
 if subcover:
     df_filtered = df_filtered[df_filtered["Subcover"] == subcover]
 
 # =====================================================
-# DYNAMIC FACTOR DROPDOWNS (SAFE)
+# DYNAMIC FACTOR DROPDOWNS
 # =====================================================
-f1 = f2 = f3 = None
+st.subheader("Faktor Risiko")
 
-factor_config = [
-    ("Factor_1", "Factor 1 (mis: Kode Okupasi)"),
-    ("Factor_2", "Factor 2 (mis: Kelas Konstruksi)"),
-    ("Factor_3", "Factor 3 (mis: Zona Risiko)")
+selected_factors = {}
+
+factor_columns = [
+    c for c in df_filtered.columns
+    if c not in ["Coverage", "Subcover", "Rate"]
 ]
 
-for col, label in factor_config:
-
-    # 🔒 SAFETY CHECK: kolom harus ada
-    if col not in df_filtered.columns:
-        continue
+for col in factor_columns:
 
     values = (
         df_filtered[col]
@@ -117,18 +115,11 @@ for col, label in factor_config:
         .unique()
     )
 
-    # 🔒 SAFETY CHECK: harus ada value
     if len(values) == 0:
         continue
 
-    selected = st.selectbox(label, sorted(values))
-
-    if col == "Factor_1":
-        f1 = selected
-    elif col == "Factor_2":
-        f2 = selected
-    elif col == "Factor_3":
-        f3 = selected
+    selected = st.selectbox(col, sorted(values))
+    selected_factors[col] = selected
 
 
 # =====================================================
@@ -137,12 +128,10 @@ for col, label in factor_config:
 if st.button("Hitung Rate"):
     try:
         rate = get_rate(
-            df_rate,
+            df=df_rate,
             coverage=coverage,
             subcover=subcover,
-            f1=f1,
-            f2=f2,
-            f3=f3
+            selected_factors=selected_factors
         )
 
         st.success(f"✅ Rate ditemukan: **{rate:.4%}**")
