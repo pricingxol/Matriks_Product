@@ -256,9 +256,9 @@ if st.session_state.results:
     st.warning(
         """
         **Catatan:**
-        1. Akuisisi Property dan Motorvehicle **dikunci** sesuai kebijakan underwriting.
-        2. Maksimum akuisisi untuk produk lain adalah **20%**.
-        3. Penyesuaian rate dilakukan akibat **perbedaan asumsi akuisisi**,
-           dengan tetap mempertahankan asumsi **expense dan target profit**.
+        1. Rate dan akuisisi kelas bisnis Property dan Motorvehicle menyesuaikan ketentuan Regulator.
+        2. Maksimum akuisisi untuk produk selain Property dan Motorvehicle adalah **20%**.
+        3. Besarnya rate adjustment dilakukan dengan adanya **perbedaan asumsi akuisisi**.
+        4. Perhitungan profitability bundling dapat diakses pada link **https://profitabilitycheckingaskrindo.streamlit.app/**.
         """
     )
