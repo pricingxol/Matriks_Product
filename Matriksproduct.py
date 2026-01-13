@@ -19,6 +19,11 @@ EXPENSE = 0.15
 PROFIT = 0.05
 MAX_AKUISISI = 0.20
 
+LOCKED_AKUISISI = {
+    "Property": 0.15,
+    "Motorvehicle": 0.25
+}
+
 # =====================================================
 # LOAD RATE MATRIX
 # =====================================================
@@ -75,7 +80,7 @@ coverage_list = sorted(df_rate["Coverage"].dropna().unique())
 
 for i, p in enumerate(st.session_state.products):
 
-    cols = st.columns([2, 3, 2, 2, 2, 0.5])
+    cols = st.columns([2, 3, 2, 2, 2, 1, 0.5])
 
     # Coverage
     with cols[0]:
@@ -137,8 +142,31 @@ for i, p in enumerate(st.session_state.products):
     p["Factors"] = factors
     p["ExpectedFactors"] = factor_cols
 
-    # Delete row
+    # =================================================
+    # AKUISISI PER PRODUK (PROTECTED)
+    # =================================================
     with cols[5]:
+        if p["Coverage"] in LOCKED_AKUISISI:
+            p["Akuisisi"] = LOCKED_AKUISISI[p["Coverage"]]
+
+            st.number_input(
+                "Akuisisi (%)" if i == 0 else "",
+                value=p["Akuisisi"] * 100,
+                disabled=True,
+                key=f"akuisisi_{i}"
+            )
+        else:
+            p["Akuisisi"] = st.number_input(
+                "Akuisisi (%)" if i == 0 else "",
+                min_value=0.0,
+                max_value=20.0,
+                value=20.0,
+                step=0.5,
+                key=f"akuisisi_{i}"
+            ) / 100
+
+    # Delete row
+    with cols[6]:
         if len(st.session_state.products) > 1:
             if st.button("❌", key=f"del_{i}"):
                 st.session_state.products.pop(i)
@@ -154,37 +182,17 @@ if st.button("➕ Tambah Produk"):
     st.rerun()
 
 # =====================================================
-# AKUISISI SLIDER
-# =====================================================
-st.subheader("Asumsi Akuisisi")
-
-col1, col2 = st.columns([4, 1])
-
-with col1:
-    akuisisi_user = st.slider(
-        "Akuisisi (%)",
-        min_value=0.0,
-        max_value=20.0,
-        value=20.0,
-        step=0.5
-    )
-
-with col2:
-    st.text_input(
-        "Nilai Terpilih",
-        value=f"{akuisisi_user:.1f}%",
-        disabled=True
-    )
-
-akuisisi_user /= 100
-
-# =====================================================
 # VALIDATION
 # =====================================================
 def validate_products(products):
     for idx, p in enumerate(products, start=1):
+
         if len(p.get("Factors", {})) < len(p.get("ExpectedFactors", [])):
             return False, f"Produk {idx}: Faktor risiko belum lengkap"
+
+        if p["Coverage"] not in LOCKED_AKUISISI and p["Akuisisi"] > MAX_AKUISISI:
+            return False, f"Akuisisi Produk {idx} melebihi 20%"
+
     return True, None
 
 # =====================================================
@@ -200,37 +208,38 @@ if st.button("Hitung Rate"):
         results = []
         total_rate = 0
 
+        denom_matrix = 1 - EXPENSE - PROFIT - MAX_AKUISISI  # 0.6
+
         for p in st.session_state.products:
-            rate = get_rate(
+
+            base_rate = get_rate(
                 df_rate,
                 p["Coverage"],
                 p["Subcover"],
                 p["Factors"]
             )
 
-            total_rate += rate
+            denom_user = 1 - EXPENSE - PROFIT - p["Akuisisi"]
+            adjusted_rate = base_rate * (denom_matrix / denom_user)
+
+            total_rate += adjusted_rate
 
             results.append({
                 "Coverage": p["Coverage"],
                 "Subcover": p["Subcover"],
                 **p["Factors"],
-                "Rate (%)": rate * 100
+                "Akuisisi (%)": f"{p['Akuisisi']*100:.1f}%",
+                "Rate (%)": adjusted_rate * 100
             })
 
-        # === AKUISISI ADJUSTMENT ===
-        denom_matrix = 1 - EXPENSE - PROFIT - MAX_AKUISISI   # 0.6
-        denom_user   = 1 - EXPENSE - PROFIT - akuisisi_user # 0.8 - x
-
-        adjusted_rate = total_rate * (denom_matrix / denom_user)
-
-        st.session_state.results = (results, total_rate, adjusted_rate)
+        st.session_state.results = (results, total_rate)
 
 # =====================================================
 # OUTPUT
 # =====================================================
 if st.session_state.results:
 
-    results, total_rate, adjusted_rate = st.session_state.results
+    results, total_rate = st.session_state.results
 
     st.subheader("Bundling Product")
 
@@ -241,19 +250,15 @@ if st.session_state.results:
     st.dataframe(df_out, use_container_width=True, hide_index=True)
 
     st.success(
-        f"""
-        ✅ **Bundling Rate (Akuisisi 20%)**: {total_rate * 100:.4f}%
-
-        🔽 **Adjusted Rate (Akuisisi {akuisisi_user * 100:.1f}%)**:  
-        **{adjusted_rate * 100:.4f}%**
-        """
+        f"✅ **Total Bundling Rate (Adjusted)**: {total_rate * 100:.4f}%"
     )
 
     st.warning(
         """
         **Catatan:**
-        1. Maksimum akuisisi adalah **20%**, kecuali terdapat ketentuan dari **Regulator**.
-        2. Penyesuaian rate dilakukan akibat **perbedaan asumsi akuisisi**,
+        1. Akuisisi Property dan Motorvehicle **dikunci** sesuai kebijakan underwriting.
+        2. Maksimum akuisisi untuk produk lain adalah **20%**.
+        3. Penyesuaian rate dilakukan akibat **perbedaan asumsi akuisisi**,
            dengan tetap mempertahankan asumsi **expense dan target profit**.
         """
     )
