@@ -94,18 +94,21 @@ if subcover:
     df_filtered = df_filtered[df_filtered["Subcover"] == subcover]
 
 # =====================================================
-# DYNAMIC FACTOR DROPDOWNS
+# DYNAMIC FACTOR DROPDOWNS (SAFE)
 # =====================================================
 f1 = f2 = f3 = None
 
-factor_cols = ["Factor_1", "Factor_2", "Factor_3"]
-labels = [
-    "Factor 1 (mis: Kode Okupasi)",
-    "Factor 2 (mis: Kelas Konstruksi)",
-    "Factor 3 (mis: Zona Risiko)"
+factor_config = [
+    ("Factor_1", "Factor 1 (mis: Kode Okupasi)"),
+    ("Factor_2", "Factor 2 (mis: Kelas Konstruksi)"),
+    ("Factor_3", "Factor 3 (mis: Zona Risiko)")
 ]
 
-for col, label in zip(factor_cols, labels):
+for col, label in factor_config:
+
+    # 🔒 SAFETY CHECK: kolom harus ada
+    if col not in df_filtered.columns:
+        continue
 
     values = (
         df_filtered[col]
@@ -114,18 +117,19 @@ for col, label in zip(factor_cols, labels):
         .unique()
     )
 
-    if len(values) > 0:
-        selected = st.selectbox(
-            label,
-            sorted(values)
-        )
+    # 🔒 SAFETY CHECK: harus ada value
+    if len(values) == 0:
+        continue
 
-        if col == "Factor_1":
-            f1 = selected
-        elif col == "Factor_2":
-            f2 = selected
-        elif col == "Factor_3":
-            f3 = selected
+    selected = st.selectbox(label, sorted(values))
+
+    if col == "Factor_1":
+        f1 = selected
+    elif col == "Factor_2":
+        f2 = selected
+    elif col == "Factor_3":
+        f3 = selected
+
 
 # =====================================================
 # CALCULATION
