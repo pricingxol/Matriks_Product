@@ -13,7 +13,14 @@ st.title("📊 Bundling Rate Calculator")
 st.caption("by Divisi Aktuaria Askrindo")
 
 # =====================================================
-# LOAD DATA
+# PRICING ASSUMPTIONS (LOCKED)
+# =====================================================
+EXPENSE = 0.15
+PROFIT = 0.05
+MAX_AKUISISI = 0.20
+
+# =====================================================
+# LOAD RATE MATRIX
 # =====================================================
 @st.cache_data(show_spinner="Loading rate matrix...")
 def load_rate_matrix(path):
@@ -24,13 +31,13 @@ def load_rate_matrix(path):
 df_rate = load_rate_matrix("rate_matrix_produk.xlsx")
 
 # =====================================================
-# CORE ENGINE
+# CORE RATE ENGINE
 # =====================================================
-def get_rate(df, coverage, subcover, selected_factors):
+def get_rate(df, coverage, subcover, factors):
 
     q = (df["Coverage"] == coverage) & (df["Subcover"] == subcover)
 
-    for col, val in selected_factors.items():
+    for col, val in factors.items():
         q &= (
             (df[col].astype(str) == str(val)) |
             (df[col].isna())
@@ -50,7 +57,6 @@ def get_rate(df, coverage, subcover, selected_factors):
 
     return float(result.sort_values("priority").iloc[0]["Rate"])
 
-
 # =====================================================
 # SESSION STATE
 # =====================================================
@@ -60,9 +66,8 @@ if "products" not in st.session_state:
 if "results" not in st.session_state:
     st.session_state.results = None
 
-
 # =====================================================
-# INPUT PRODUK (1 ROW PER PRODUK)
+# INPUT PRODUK
 # =====================================================
 st.subheader("Input Produk")
 
@@ -72,7 +77,7 @@ for i, p in enumerate(st.session_state.products):
 
     cols = st.columns([2, 3, 2, 2, 2, 0.5])
 
-    # -------- Coverage --------
+    # Coverage
     with cols[0]:
         p["Coverage"] = st.selectbox(
             "Coverage" if i == 0 else "",
@@ -80,47 +85,41 @@ for i, p in enumerate(st.session_state.products):
             key=f"coverage_{i}"
         )
 
-    # -------- Subcover --------
-    subcover_options = (
+    # Subcover
+    subcover_list = (
         df_rate[df_rate["Coverage"] == p["Coverage"]]["Subcover"]
-        .dropna()
-        .unique()
+        .dropna().unique()
     )
 
     with cols[1]:
         p["Subcover"] = st.selectbox(
             "Subcover" if i == 0 else "",
-            sorted(subcover_options),
+            sorted(subcover_list),
             key=f"subcover_{i}"
         )
 
-    # -------- Context-aware factors --------
-    df_filt = df_rate[
+    # Context-aware factors
+    df_ctx = df_rate[
         (df_rate["Coverage"] == p["Coverage"]) &
         (df_rate["Subcover"] == p["Subcover"])
     ]
 
     factor_cols = [
-        c for c in df_filt.columns
+        c for c in df_ctx.columns
         if c not in ["Coverage", "Subcover", "Rate"]
-        and df_filt[c].dropna().nunique() > 0
+        and df_ctx[c].dropna().nunique() > 0
     ]
 
     factors = {}
-    df_context = df_filt.copy()
 
     for idx, col in enumerate(factor_cols[:3]):
         with cols[2 + idx]:
-
             values = (
-                df_context[col]
+                df_ctx[col]
                 .dropna()
                 .astype(str)
                 .unique()
             )
-
-            if len(values) == 0:
-                continue
 
             selected = st.selectbox(
                 col if i == 0 else "",
@@ -130,23 +129,21 @@ for i, p in enumerate(st.session_state.products):
 
             factors[col] = selected
 
-            # 🔥 context filtering
-            df_context = df_context[
-                (df_context[col].astype(str) == str(selected)) |
-                (df_context[col].isna())
+            df_ctx = df_ctx[
+                (df_ctx[col].astype(str) == str(selected)) |
+                (df_ctx[col].isna())
             ]
 
     p["Factors"] = factors
     p["ExpectedFactors"] = factor_cols
 
-    # -------- Delete button --------
+    # Delete row
     with cols[5]:
         if len(st.session_state.products) > 1:
             if st.button("❌", key=f"del_{i}"):
                 st.session_state.products.pop(i)
                 st.session_state.results = None
                 st.rerun()
-
 
 # =====================================================
 # ADD PRODUCT
@@ -156,20 +153,39 @@ if st.button("➕ Tambah Produk"):
     st.session_state.results = None
     st.rerun()
 
+# =====================================================
+# AKUISISI SLIDER
+# =====================================================
+st.subheader("Asumsi Akuisisi")
+
+col1, col2 = st.columns([4, 1])
+
+with col1:
+    akuisisi_user = st.slider(
+        "Akuisisi (%)",
+        min_value=0.0,
+        max_value=20.0,
+        value=20.0,
+        step=0.5
+    )
+
+with col2:
+    st.text_input(
+        "Nilai Terpilih",
+        value=f"{akuisisi_user:.1f}%",
+        disabled=True
+    )
+
+akuisisi_user /= 100
 
 # =====================================================
 # VALIDATION
 # =====================================================
 def validate_products(products):
     for idx, p in enumerate(products, start=1):
-        expected = p.get("ExpectedFactors", [])
-        filled = p.get("Factors", {})
-
-        if expected and len(filled) < len(expected):
+        if len(p.get("Factors", {})) < len(p.get("ExpectedFactors", [])):
             return False, f"Produk {idx}: Faktor risiko belum lengkap"
-
     return True, None
-
 
 # =====================================================
 # HITUNG RATE
@@ -192,6 +208,8 @@ if st.button("Hitung Rate"):
                 p["Factors"]
             )
 
+            total_rate += rate
+
             results.append({
                 "Coverage": p["Coverage"],
                 "Subcover": p["Subcover"],
@@ -199,35 +217,43 @@ if st.button("Hitung Rate"):
                 "Rate (%)": rate * 100
             })
 
-            total_rate += rate
+        # === AKUISISI ADJUSTMENT ===
+        denom_matrix = 1 - EXPENSE - PROFIT - MAX_AKUISISI   # 0.6
+        denom_user   = 1 - EXPENSE - PROFIT - akuisisi_user # 0.8 - x
 
-        st.session_state.results = (results, total_rate)
+        adjusted_rate = total_rate * (denom_matrix / denom_user)
 
+        st.session_state.results = (results, total_rate, adjusted_rate)
 
 # =====================================================
 # OUTPUT
 # =====================================================
 if st.session_state.results:
 
-    results, total_rate = st.session_state.results
+    results, total_rate, adjusted_rate = st.session_state.results
 
     st.subheader("Bundling Product")
 
     df_out = pd.DataFrame(results)
     df_out.insert(0, "No", range(1, len(df_out) + 1))
-
     df_out["Rate (%)"] = df_out["Rate (%)"].map(lambda x: f"{x:.4f}%")
 
     st.dataframe(df_out, use_container_width=True, hide_index=True)
 
     st.success(
-        f"✅ **Total Bundling Rate: {total_rate * 100:.4f}%**"
+        f"""
+        ✅ **Bundling Rate (Akuisisi 20%)**: {total_rate * 100:.4f}%
+
+        🔽 **Adjusted Rate (Akuisisi {akuisisi_user * 100:.1f}%)**:  
+        **{adjusted_rate * 100:.4f}%**
+        """
     )
 
     st.warning(
         """
         **Catatan:**
         1. Maksimum akuisisi adalah **20%**, kecuali terdapat ketentuan dari **Regulator**.
-        2. Untuk pemberian **rate di bawah rate acuan**, dapat dilakukan **perhitungan profitability checking**.
+        2. Penyesuaian rate dilakukan akibat **perbedaan asumsi akuisisi**,
+           dengan tetap mempertahankan asumsi **expense dan target profit**.
         """
     )
