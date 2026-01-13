@@ -25,15 +25,9 @@ df_rate = load_rate_matrix("rate_matrix_produk.xlsx")
 # =====================================================
 # CORE ENGINE
 # =====================================================
-def get_rate(df, coverage, subcover=None, selected_factors=None):
+def get_rate(df, coverage, subcover, selected_factors):
 
-    if selected_factors is None:
-        selected_factors = {}
-
-    q = df["Coverage"] == coverage
-
-    if subcover:
-        q &= df["Subcover"] == subcover
+    q = (df["Coverage"] == coverage) & (df["Subcover"] == subcover)
 
     for col, val in selected_factors.items():
         if col not in df.columns:
@@ -48,7 +42,7 @@ def get_rate(df, coverage, subcover=None, selected_factors=None):
     result = df[q].copy()
 
     if result.empty:
-        raise ValueError("Rate tidak ditemukan")
+        raise ValueError(f"Rate tidak ditemukan: {coverage} - {subcover}")
 
     factor_cols = [
         c for c in df.columns
@@ -65,117 +59,164 @@ def get_rate(df, coverage, subcover=None, selected_factors=None):
 # SESSION STATE
 # =====================================================
 if "products" not in st.session_state:
-    st.session_state.products = []
+    st.session_state.products = [{}]
+
+if "results" not in st.session_state:
+    st.session_state.results = None
+
 
 # =====================================================
-# INPUT PRODUK (UI KAMU – VERTIKAL)
+# INPUT PRODUK (BARIS)
 # =====================================================
-st.subheader("➕ Tambah Produk")
+st.subheader("Input Produk")
 
-coverage = st.selectbox(
-    "Coverage",
-    sorted(df_rate["Coverage"].dropna().unique())
-)
+coverage_list = sorted(df_rate["Coverage"].dropna().unique())
 
-subcover_options = (
-    df_rate[df_rate["Coverage"] == coverage]["Subcover"]
-    .dropna()
-    .unique()
-)
+for i, p in enumerate(st.session_state.products):
 
-subcover = st.selectbox(
-    "Subcover",
-    sorted(subcover_options)
-)
+    st.markdown(f"### Produk {i + 1}")
 
-# =====================================================
-# FAKTOR RISIKO
-# =====================================================
-st.subheader("Faktor Risiko")
+    col1, col2, col3 = st.columns([3, 3, 1])
 
-df_filtered = df_rate[
-    (df_rate["Coverage"] == coverage) &
-    (df_rate["Subcover"] == subcover)
-]
+    with col1:
+        p["Coverage"] = st.selectbox(
+            "Coverage",
+            coverage_list,
+            key=f"coverage_{i}"
+        )
 
-selected_factors = {}
-
-for col in df_filtered.columns:
-    if col in ["Coverage", "Subcover", "Rate"]:
-        continue
-
-    values = (
-        df_filtered[col]
+    subcover_options = (
+        df_rate[df_rate["Coverage"] == p["Coverage"]]["Subcover"]
         .dropna()
-        .loc[~df_filtered[col].isin(["ALL"])]
-        .astype(str)
         .unique()
     )
 
-    if len(values) == 0:
-        continue
-
-    selected_factors[col] = st.selectbox(col, sorted(values))
-
-# =====================================================
-# ADD PRODUCT
-# =====================================================
-if st.button("➕ Tambah Produk"):
-    try:
-        rate = get_rate(
-            df=df_rate,
-            coverage=coverage,
-            subcover=subcover,
-            selected_factors=selected_factors
+    with col2:
+        p["Subcover"] = st.selectbox(
+            "Subcover",
+            sorted(subcover_options),
+            key=f"subcover_{i}"
         )
 
-        st.session_state.products.append({
-            "Coverage": coverage,
-            "Subcover": subcover,
-            "Factors": selected_factors,
-            "Rate": rate
-        })
+    with col3:
+        if len(st.session_state.products) > 1:
+            if st.button("❌", key=f"delete_{i}"):
+                st.session_state.products.pop(i)
+                st.session_state.results = None
+                st.rerun()
 
-        st.success("Produk berhasil ditambahkan")
-        st.rerun()
+    # =========================
+    # Faktor Risiko
+    # =========================
+    df_filt = df_rate[
+        (df_rate["Coverage"] == p["Coverage"]) &
+        (df_rate["Subcover"] == p["Subcover"])
+    ]
 
-    except Exception as e:
-        st.error(str(e))
+    factors = {}
+
+    for col in df_filt.columns:
+        if col in ["Coverage", "Subcover", "Rate"]:
+            continue
+
+        values = (
+            df_filt[col]
+            .dropna()
+            .loc[~df_filt[col].isin(["ALL"])]
+            .astype(str)
+            .unique()
+        )
+
+        if len(values) == 0:
+            continue
+
+        factors[col] = st.selectbox(
+            col,
+            sorted(values),
+            key=f"{col}_{i}"
+        )
+
+    p["Factors"] = factors
+
+    st.divider()
+
 
 # =====================================================
-# BUNDLING RESULT
+# TAMBAH PRODUK
 # =====================================================
-st.divider()
-st.subheader("📦 Bundling Product")
+if st.button("➕ Tambah Produk"):
+    st.session_state.products.append({})
+    st.session_state.results = None
+    st.rerun()
 
-if len(st.session_state.products) == 0:
-    st.info("Belum ada produk yang dibundling")
-else:
-    rows = []
-    total_rate = 0
 
-    for i, p in enumerate(st.session_state.products):
-        row = {
-            "No": i + 1,
-            "Coverage": p["Coverage"],
-            "Subcover": p["Subcover"],
-            "Rate": p["Rate"]
-        }
+# =====================================================
+# VALIDATION FUNCTION
+# =====================================================
+def validate_inputs(products):
+    for idx, p in enumerate(products, start=1):
+        if not p.get("Coverage"):
+            return False, f"Produk {idx}: Coverage belum dipilih"
+        if not p.get("Subcover"):
+            return False, f"Produk {idx}: Subcover belum dipilih"
+        if not p.get("Factors"):
+            return False, f"Produk {idx}: Faktor risiko belum lengkap"
+    return True, None
 
-        for k, v in p["Factors"].items():
-            row[k] = v
 
-        rows.append(row)
-        total_rate += p["Rate"]
+# =====================================================
+# HITUNG RATE
+# =====================================================
+if st.button("Hitung Rate"):
 
-    df_bundle = pd.DataFrame(rows)
-    st.dataframe(df_bundle, use_container_width=True, hide_index=True)
+    valid, msg = validate_inputs(st.session_state.products)
+
+    if not valid:
+        st.error(f"❌ {msg}")
+    else:
+        results = []
+        total_rate = 0
+
+        try:
+            for p in st.session_state.products:
+                rate = get_rate(
+                    df_rate,
+                    p["Coverage"],
+                    p["Subcover"],
+                    p["Factors"]
+                )
+
+                results.append({
+                    "Coverage": p["Coverage"],
+                    "Subcover": p["Subcover"],
+                    **p["Factors"],
+                    "Rate": rate
+                })
+
+                total_rate += rate
+
+            st.session_state.results = (results, total_rate)
+
+        except Exception as e:
+            st.error(str(e))
+
+
+# =====================================================
+# OUTPUT (ONLY AFTER HITUNG RATE)
+# =====================================================
+if st.session_state.results:
+
+    results, total_rate = st.session_state.results
+
+    st.subheader("Bundling Product")
+
+    df_out = pd.DataFrame(results)
+    df_out.insert(0, "No", range(1, len(df_out) + 1))
+
+    st.dataframe(df_out, use_container_width=True, hide_index=True)
 
     st.success(f"✅ **Total Bundling Rate: {total_rate:.4%}**")
 
-    # =================================================
-    # CATATAN (REQUEST KAMU)
-    # =================================================
     st.warning(
         """
         **Catatan:**
@@ -183,22 +224,3 @@ else:
         2. Untuk pemberian **rate di bawah rate acuan**, dapat dilakukan **perhitungan profitability checking**.
         """
     )
-
-# =====================================================
-# RESET
-# =====================================================
-if st.button("🔄 Reset Bundling"):
-    st.session_state.products = []
-    st.rerun()
-
-# =====================================================
-# VIEW RATE MATRIX
-# =====================================================
-st.divider()
-st.subheader("📋 Rate Matrix (Read Only)")
-
-st.dataframe(
-    df_rate,
-    use_container_width=True,
-    hide_index=True
-)
